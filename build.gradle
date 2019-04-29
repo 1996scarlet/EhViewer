@@ -2,12 +2,15 @@
 
 buildscript {
     repositories {
+        google()
         jcenter()
+        maven { url "https://maven.fabric.io/public" }
         maven { url "https://jitpack.io" }
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:2.3.1'
-        classpath 'com.github.seven332:android-chinese-string-gradle-plugin:0.1.0'
+        classpath 'com.android.tools.build:gradle:3.4.0'
+        classpath 'com.google.gms:google-services:4.2.0'
+        classpath 'io.fabric.tools:gradle:1.27.1'
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
@@ -16,6 +19,7 @@ buildscript {
 
 allprojects {
     repositories {
+        google()
         jcenter()
         maven { url "https://jitpack.io" }
     }
@@ -23,20 +27,4 @@ allprojects {
 
 task clean(type: Delete) {
     delete rootProject.buildDir
-}
-
-ext {
-    supportLibrary = '25.3.1'
-}
-
-subprojects {
-    project.configurations.all {
-        resolutionStrategy.eachDependency { details ->
-            // Keep all android support library update to date
-            if (details.requested.group == 'com.android.support'
-                    && !details.requested.name.contains('multidex') ) {
-                details.useVersion "$supportLibrary"
-            }
-        }
-    }
 }

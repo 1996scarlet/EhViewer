@@ -20,8 +20,6 @@ import android.content.Context;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.os.Parcelable;
-import android.support.annotation.NonNull;
-import android.support.v7.widget.RecyclerView;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.view.LayoutInflater;
@@ -30,11 +28,15 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 import android.widget.Toast;
-
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.recyclerview.widget.RecyclerView;
+import com.hippo.android.resource.AttrResources;
 import com.hippo.easyrecyclerview.EasyRecyclerView;
 import com.hippo.easyrecyclerview.FastScroller;
 import com.hippo.easyrecyclerview.HandlerDrawable;
 import com.hippo.easyrecyclerview.LayoutManagerUtils;
+import com.hippo.ehviewer.EhApplication;
 import com.hippo.ehviewer.R;
 import com.hippo.refreshlayout.RefreshLayout;
 import com.hippo.util.DrawableManager;
@@ -42,10 +44,10 @@ import com.hippo.util.ExceptionUtils;
 import com.hippo.view.ViewTransition;
 import com.hippo.yorozuya.IntIdGenerator;
 import com.hippo.yorozuya.LayoutUtils;
-import com.hippo.yorozuya.ResourcesUtils;
 import com.hippo.yorozuya.collect.IntList;
-
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
 import java.util.List;
 
 public class ContentLayout extends FrameLayout {
@@ -91,7 +93,7 @@ public class ContentLayout extends FrameLayout {
 
         mFastScroller.attachToRecyclerView(mRecyclerView);
         HandlerDrawable drawable = new HandlerDrawable();
-        drawable.setColor(ResourcesUtils.getAttrColor(context, R.attr.colorAccent));
+        drawable.setColor(AttrResources.getAttrColor(context, R.attr.widgetColorThemeAccent));
         mFastScroller.setHandlerDrawable(drawable);
 
         mRefreshLayout.setHeaderColorSchemeResources(
@@ -167,6 +169,8 @@ public class ContentLayout extends FrameLayout {
 
         private static final String TAG = ContentHelper.class.getSimpleName();
 
+        private static final int CHECK_DUPLICATE_RANGE = 50;
+
         private static final String KEY_SUPER = "super";
         private static final String KEY_SHOWN_VIEW = "shown_view";
         private static final String KEY_TIP = "tip";
@@ -232,6 +236,8 @@ public class ContentLayout extends FrameLayout {
          */
         private int mPages;
 
+        private int mNextPage;
+
         private int mCurrentTaskId;
         private int mCurrentTaskType;
         private int mCurrentTaskPage;
@@ -268,6 +274,13 @@ public class ContentLayout extends FrameLayout {
             public void onFooterRefresh() {
                 if (mEndPage < mPages) {
                     // Get next page
+                    // Fill pages before NextPage with empty list
+                    while (mNextPage > mEndPage && mEndPage < mPages) {
+                        mCurrentTaskId = mIdGenerator.nextId();
+                        mCurrentTaskType = TYPE_NEXT_PAGE_KEEP_POS;
+                        mCurrentTaskPage = mEndPage;
+                        onGetPageData(mCurrentTaskId, mPages, mNextPage, Collections.emptyList());
+                    }
                     mCurrentTaskId = mIdGenerator.nextId();
                     mCurrentTaskType = TYPE_NEXT_PAGE_KEEP_POS;
                     mCurrentTaskPage = mEndPage;
@@ -280,6 +293,7 @@ public class ContentLayout extends FrameLayout {
                     getPageData(mCurrentTaskId, mCurrentTaskType, mCurrentTaskPage);
                 } else {
                     Log.e(TAG, "Try to footer refresh, but mEndPage = " + mEndPage + ", mPages = " + mPages);
+                    mRefreshLayout.setFooterRefreshing(false);
                 }
             }
         };
@@ -302,7 +316,7 @@ public class ContentLayout extends FrameLayout {
             mRefreshLayout = contentLayout.mRefreshLayout;
             mRecyclerView = contentLayout.mRecyclerView;
 
-            Drawable drawable = DrawableManager.getDrawable(getContext(), R.drawable.big_weird_face);
+            Drawable drawable = DrawableManager.getVectorDrawable(getContext(), R.drawable.big_sad_pandroid);
             drawable.setBounds(0, 0, drawable.getIntrinsicWidth(), drawable.getIntrinsicHeight());
             mTipView.setCompoundDrawables(null, drawable, null, null);
 
@@ -321,7 +335,7 @@ public class ContentLayout extends FrameLayout {
         }
 
         /**
-         * Call {@link #onGetPageData(int, List)} when get data
+         * Call {@link #onGetPageData(int, int, int, List)} when get data
          *
          * @param taskId task id
          * @param page the page to get
@@ -369,6 +383,15 @@ public class ContentLayout extends FrameLayout {
             return mData.get(location);
         }
 
+        @Nullable
+        public E getDataAtEx(int location) {
+            if (location >= 0 && location < mData.size()) {
+                return mData.get(location);
+            } else {
+                return null;
+            }
+        }
+
         public int size() {
             return mData.size();
         }
@@ -377,19 +400,13 @@ public class ContentLayout extends FrameLayout {
             return mCurrentTaskId == taskId;
         }
 
-        public void setPages(int taskId, int pages) {
-            // TODO what it pages > mEndPage
-            if (mCurrentTaskId == taskId) {
-                mPages = pages;
-            }
-        }
-
         public int getPages() {
             return mPages;
         }
 
         public void addAt(int index, E data) {
             mData.add(index, data);
+            onAddData(data);
 
             for (int i = 0, n = mPageDivider.size(); i < n; i++) {
                 int divider = mPageDivider.get(i);
@@ -402,7 +419,8 @@ public class ContentLayout extends FrameLayout {
         }
 
         public void removeAt(int index) {
-            mData.remove(index);
+            E data = mData.remove(index);
+            onRemoveData(data);
 
             for (int i = 0, n = mPageDivider.size(); i < n; i++) {
                 int divider = mPageDivider.get(i);
@@ -414,7 +432,33 @@ public class ContentLayout extends FrameLayout {
             notifyItemRangeRemoved(index, 1);
         }
 
-        public void onGetPageData(int taskId, List<E> data) {
+        protected abstract boolean isDuplicate(E d1, E d2);
+
+        private void removeDuplicateData(List<E> data, int start, int end) {
+            start = Math.max(0, start);
+            end = Math.min(mData.size(), end);
+            for (Iterator<E> iterator = data.iterator(); iterator.hasNext();) {
+                E d = iterator.next();
+                for (int i = start; i < end; i++) {
+                    if (isDuplicate(d, mData.get(i))) {
+                        iterator.remove();
+                        break;
+                    }
+                }
+            }
+        }
+
+        protected void onAddData(E data) { }
+
+        protected void onAddData(List<E> data) { }
+
+        protected void onRemoveData(E data) { }
+
+        protected void onRemoveData(List<E> data) { }
+
+        protected void onClearData() { }
+
+        public void onGetPageData(int taskId, int pages, int nextPage, List<E> data) {
             if (mCurrentTaskId == taskId) {
                 int dataSize;
 
@@ -422,11 +466,14 @@ public class ContentLayout extends FrameLayout {
                     case TYPE_REFRESH:
                         mStartPage = 0;
                         mEndPage = 1;
+                        mPages = pages;
+                        mNextPage = nextPage;
                         mPageDivider.clear();
                         mPageDivider.add(data.size());
 
                         if (data.isEmpty()) {
                             mData.clear();
+                            onClearData();
                             notifyDataSetChanged();
 
                             if (true || mEndPage >= mPages) { // Not found
@@ -448,7 +495,9 @@ public class ContentLayout extends FrameLayout {
                             }
                         } else {
                             mData.clear();
+                            onClearData();
                             mData.addAll(data);
+                            onAddData(data);
                             notifyDataSetChanged();
 
                             // Ui change, show content
@@ -466,12 +515,14 @@ public class ContentLayout extends FrameLayout {
                         break;
                     case TYPE_PRE_PAGE:
                     case TYPE_PRE_PAGE_KEEP_POS:
+                        removeDuplicateData(data, 0, CHECK_DUPLICATE_RANGE);
                         dataSize = data.size();
                         for (int i = 0, n = mPageDivider.size(); i < n; i++) {
                             mPageDivider.set(i, mPageDivider.get(i) + dataSize);
                         }
                         mPageDivider.add(0, dataSize);
                         mStartPage--;
+                        mPages = Math.max(mEndPage, pages);
                         // assert mStartPage >= 0
 
                         if (data.isEmpty()) {
@@ -505,6 +556,7 @@ public class ContentLayout extends FrameLayout {
                             }
                         } else {
                             mData.addAll(0, data);
+                            onAddData(data);
                             notifyItemRangeInserted(0, data.size());
 
                             // Ui change, show content
@@ -528,10 +580,13 @@ public class ContentLayout extends FrameLayout {
                         break;
                     case TYPE_NEXT_PAGE:
                     case TYPE_NEXT_PAGE_KEEP_POS:
+                        removeDuplicateData(data, mData.size() - CHECK_DUPLICATE_RANGE, mData.size());
                         dataSize = data.size();
                         int oldDataSize = mData.size();
                         mPageDivider.add(oldDataSize + dataSize);
                         mEndPage++;
+                        mNextPage = nextPage;
+                        mPages = Math.max(mEndPage, pages);
 
                         if (data.isEmpty()) {
                             if (true || mEndPage >= mPages) { // OK, that's all
@@ -564,6 +619,7 @@ public class ContentLayout extends FrameLayout {
                             }
                         } else {
                             mData.addAll(data);
+                            onAddData(data);
                             notifyItemRangeInserted(oldDataSize, dataSize);
 
                             // Ui change, show content
@@ -586,11 +642,14 @@ public class ContentLayout extends FrameLayout {
                     case TYPE_SOMEWHERE:
                         mStartPage = mCurrentTaskPage;
                         mEndPage = mCurrentTaskPage + 1;
+                        mNextPage = nextPage;
+                        mPages = pages;
                         mPageDivider.clear();
                         mPageDivider.add(data.size());
 
                         if (data.isEmpty()) {
                             mData.clear();
+                            onClearData();
                             notifyDataSetChanged();
 
                             if (true || mEndPage >= mPages) { // Not found
@@ -612,7 +671,9 @@ public class ContentLayout extends FrameLayout {
                             }
                         } else {
                             mData.clear();
+                            onClearData();
                             mData.addAll(data);
+                            onAddData(data);
                             notifyDataSetChanged();
 
                             // Ui change, show content
@@ -635,12 +696,22 @@ public class ContentLayout extends FrameLayout {
                             break;
                         }
 
+                        if (mCurrentTaskPage == mEndPage - 1) {
+                            mNextPage = nextPage;
+                        }
+
+                        mPages = Math.max(mEndPage, pages);
+
                         int oldIndexStart = mCurrentTaskPage == mStartPage ? 0 : mPageDivider.get(mCurrentTaskPage - mStartPage - 1);
                         int oldIndexEnd = mPageDivider.get(mCurrentTaskPage - mStartPage);
-                        mData.subList(oldIndexStart, oldIndexEnd).clear();
+                        List<E> toRemove = mData.subList(oldIndexStart, oldIndexEnd);
+                        onRemoveData(toRemove);
+                        toRemove.clear();
+                        removeDuplicateData(data, oldIndexStart - CHECK_DUPLICATE_RANGE, oldIndexStart + CHECK_DUPLICATE_RANGE);
                         int newIndexStart = oldIndexStart;
                         int newIndexEnd = newIndexStart + data.size();
                         mData.addAll(oldIndexStart, data);
+                        onAddData(data);
                         notifyDataSetChanged();
 
                         for (int i = mCurrentTaskPage - mStartPage, n = mPageDivider.size(); i < n; i++) {
@@ -856,14 +927,24 @@ public class ContentLayout extends FrameLayout {
             }
         }
 
-        private Parcelable saveInstanceState(Parcelable superState) {
+        private int mSavedDataId = IntIdGenerator.INVALID_ID;
+
+        protected Parcelable saveInstanceState(Parcelable superState) {
             Bundle bundle = new Bundle();
             bundle.putParcelable(KEY_SUPER, superState);
             int shownView = mViewTransition.getShownViewIndex();
             bundle.putInt(KEY_SHOWN_VIEW, shownView);
             bundle.putString(KEY_TIP, mTipView.getText().toString());
-            // TODO What if data is large
-            bundle.putParcelableArrayList(KEY_DATA, mData);
+
+            // TODO It's a bad design
+            EhApplication app = (EhApplication) getContext().getApplicationContext();
+            if (mSavedDataId != IntIdGenerator.INVALID_ID) {
+                app.removeGlobalStuff(mSavedDataId);
+                mSavedDataId = IntIdGenerator.INVALID_ID;
+            }
+            mSavedDataId = app.putGlobalStuff(mData);
+            bundle.putInt(KEY_DATA, mSavedDataId);
+
             bundle.putInt(KEY_NEXT_ID, mIdGenerator.nextId());
             bundle.putParcelable(KEY_PAGE_DIVIDER, mPageDivider);
             bundle.putInt(KEY_START_PAGE, mStartPage);
@@ -872,17 +953,39 @@ public class ContentLayout extends FrameLayout {
             return bundle;
         }
 
-        private Parcelable restoreInstanceState(Parcelable state) {
+        protected Parcelable restoreInstanceState(Parcelable state) {
             if (state instanceof Bundle) {
                 Bundle bundle = (Bundle) state;
                 mViewTransition.showView(bundle.getInt(KEY_SHOWN_VIEW), false);
                 mTipView.setText(bundle.getString(KEY_TIP));
-                mData = bundle.getParcelableArrayList(KEY_DATA);
+
+                mSavedDataId = bundle.getInt(KEY_DATA);
+                ArrayList<E> newData = null;
+                EhApplication app = (EhApplication) getContext().getApplicationContext();
+                if (mSavedDataId != IntIdGenerator.INVALID_ID) {
+                    newData = (ArrayList<E>) app.removeGlobalStuff(mSavedDataId);
+                    mSavedDataId = IntIdGenerator.INVALID_ID;
+                    if (newData != null) {
+                        mData = newData;
+                    }
+                }
+
                 mIdGenerator.setNextId(bundle.getInt(KEY_NEXT_ID));
                 mPageDivider = bundle.getParcelable(KEY_PAGE_DIVIDER);
                 mStartPage = bundle.getInt(KEY_START_PAGE);
                 mEndPage = bundle.getInt(KEY_END_PAGE);
                 mPages = bundle.getInt(KEY_PAGES);
+
+                notifyDataSetChanged();
+
+                if (newData == null) {
+                    mPageDivider.clear();
+                    mStartPage = 0;
+                    mEndPage = 0;
+                    mPages = 0;
+                    firstRefresh();
+                }
+
                 return bundle.getParcelable(KEY_SUPER);
             } else {
                 return state;

@@ -32,7 +32,7 @@ public class EhDaoGenerator {
     private static final String OUT_DIR = "../app/src/main/java-gen";
     private static final String DELETE_DIR = "../app/src/main/java-gen/com/hippo/ehviewer/dao";
 
-    private static final int VERSION = 2;
+    private static final int VERSION = 4;
 
     private static final String DOWNLOAD_INFO_PATH = "../app/src/main/java-gen/com/hippo/ehviewer/dao/DownloadInfo.java";
     private static final String HISTORY_INFO_PATH = "../app/src/main/java-gen/com/hippo/ehviewer/dao/HistoryInfo.java";
@@ -138,6 +138,10 @@ public class EhDaoGenerator {
         entity.addStringProperty("keyword");
         entity.addIntProperty("advanceSearch").notNull();
         entity.addIntProperty("minRating").notNull();
+        // Since 4
+        entity.addIntProperty("pageFrom").notNull();
+        // Since 4
+        entity.addIntProperty("pageTo").notNull();
         entity.addLongProperty("time").notNull();
     }
 
@@ -190,6 +194,8 @@ public class EhDaoGenerator {
         entity.addIdProperty();
         entity.addIntProperty("mode").notNull();
         entity.addStringProperty("text");
+        // Since 3
+        entity.addBooleanProperty("enable");
     }
 
     private static void adjustDownloadInfo() throws Exception {
@@ -351,6 +357,8 @@ public class EhDaoGenerator {
         javaClass.getField("keyword").setPublic();
         javaClass.getField("advanceSearch").setPublic();
         javaClass.getField("minRating").setPublic();
+        javaClass.getField("pageFrom").setPublic();
+        javaClass.getField("pageTo").setPublic();
         javaClass.getField("time").setPublic();
 
         javaClass.addMethod("\t@Override\n" +
@@ -496,7 +504,13 @@ public class EhDaoGenerator {
         // Set field public
         javaClass.getField("mode").setPublic();
         javaClass.getField("text").setPublic();
-        // Add equals method
+        javaClass.getField("enable").setPublic();
+        // Add hashCode method and equals method
+        javaClass.addImport("com.hippo.util.HashCodeUtils");
+        javaClass.addMethod("\t@Override\n" +
+                "\tpublic int hashCode() {\n" +
+                "\t\treturn HashCodeUtils.hashCode(mode, text);\n" +
+                "\t}");
         javaClass.addImport("com.hippo.yorozuya.ObjectUtils");
         javaClass.addMethod("\t@Override\n" +
                 "\tpublic boolean equals(Object o) {\n" +

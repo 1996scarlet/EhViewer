@@ -23,23 +23,21 @@ import android.hardware.fingerprint.FingerprintManager;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.CancellationSignal;
-import android.support.annotation.Nullable;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
-
+import androidx.annotation.Nullable;
 import com.hippo.ehviewer.R;
 import com.hippo.ehviewer.Settings;
 import com.hippo.ehviewer.ui.MainActivity;
+import com.hippo.ehviewer.ui.SetSecurityActivity;
 import com.hippo.hardware.ShakeDetector;
 import com.hippo.widget.lockpattern.LockPatternUtils;
 import com.hippo.widget.lockpattern.LockPatternView;
+import com.hippo.yorozuya.AssertUtils;
 import com.hippo.yorozuya.ObjectUtils;
 import com.hippo.yorozuya.ViewUtils;
-
-import junit.framework.Assert;
-
 import java.util.List;
 
 public class SecurityScene extends SolidScene implements
@@ -58,6 +56,7 @@ public class SecurityScene extends SolidScene implements
     private SensorManager mSensorManager;
     private Sensor mAccelerometer;
     private ShakeDetector mShakeDetector;
+    @Nullable
     private FingerprintManager mFingerprintManager;
 
     private CancellationSignal mFingerprintCancellationSignal;
@@ -74,7 +73,7 @@ public class SecurityScene extends SolidScene implements
         super.onCreate(savedInstanceState);
 
         Context context = getContext2();
-        Assert.assertNotNull(context);
+        AssertUtils.assertNotNull(context);
         mSensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
         if (null != mSensorManager) {
             mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
@@ -130,7 +129,7 @@ public class SecurityScene extends SolidScene implements
                         @Override
                         public void onAuthenticationSucceeded(
                                 FingerprintManager.AuthenticationResult result) {
-                            mFingerprintIcon.setImageResource(R.drawable.ic_fingerprint_success);
+                            mFingerprintIcon.setImageResource(R.drawable.fingerprint_success);
                             mFingerprintIcon.postDelayed(new Runnable() {
                                 @Override
                                 public void run() {
@@ -237,8 +236,7 @@ public class SecurityScene extends SolidScene implements
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.M
                 && Settings.getEnableFingerprint()
                 && mFingerprintManager != null
-                && mFingerprintManager.isHardwareDetected()
-                && mFingerprintManager.hasEnrolledFingerprints();
+                && SetSecurityActivity.hasEnrolledFingerprints(mFingerprintManager);
     }
 
     private Runnable mResetFingerprintRunnable = new Runnable() {
@@ -251,7 +249,7 @@ public class SecurityScene extends SolidScene implements
 
     private void fingerprintError(boolean unrecoverable) {
         // Do not decrease mRetryTimes here since Android system will handle it :)
-        mFingerprintIcon.setImageResource(R.drawable.ic_fingerprint_error);
+        mFingerprintIcon.setImageResource(R.drawable.fingerprint_error);
         mFingerprintIcon.removeCallbacks(mResetFingerprintRunnable);
         if (unrecoverable) {
             mFingerprintIcon.postDelayed(new Runnable() {

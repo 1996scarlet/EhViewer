@@ -23,17 +23,16 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.res.Resources;
 import android.os.Bundle;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.v7.app.AlertDialog;
-import android.support.v7.widget.RecyclerView;
 import android.util.Pair;
 import android.view.LayoutInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
-
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AlertDialog;
+import androidx.recyclerview.widget.RecyclerView;
 import com.hippo.easyrecyclerview.EasyRecyclerView;
 import com.hippo.easyrecyclerview.MarginItemDecoration;
 import com.hippo.ehviewer.EhApplication;
@@ -53,11 +52,9 @@ import com.hippo.widget.ContentLayout;
 import com.hippo.widget.LoadImageView;
 import com.hippo.widget.Slider;
 import com.hippo.widget.recyclerview.AutoGridLayoutManager;
+import com.hippo.yorozuya.AssertUtils;
 import com.hippo.yorozuya.LayoutUtils;
 import com.hippo.yorozuya.ViewUtils;
-
-import junit.framework.Assert;
-
 import java.util.ArrayList;
 import java.util.Locale;
 
@@ -91,7 +88,7 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
         super.onCreate(savedInstanceState);
 
         Context context = getContext2();
-        Assert.assertNotNull(context);
+        AssertUtils.assertNotNull(context);
         mClient = EhApplication.getEhClient(context);
         if (savedInstanceState == null) {
             onInit();
@@ -138,7 +135,7 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
         mRecyclerView = contentLayout.getRecyclerView();
 
         Context context = getContext2();
-        Assert.assertNotNull(context);
+        AssertUtils.assertNotNull(context);
         Resources resources = context.getResources();
 
         mAdapter = new GalleryPreviewAdapter();
@@ -232,12 +229,14 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
     public boolean onItemClick(EasyRecyclerView parent, View view, int position, long id) {
         Context context = getContext2();
         if (null != context && null != mHelper && null != mGalleryInfo) {
-            GalleryPreview p = mHelper.getDataAt(position);
-            Intent intent = new Intent(context, GalleryActivity.class);
-            intent.setAction(GalleryActivity.ACTION_EH);
-            intent.putExtra(GalleryActivity.KEY_GALLERY_INFO, mGalleryInfo);
-            intent.putExtra(GalleryActivity.KEY_PAGE, p.getPosition());
-            startActivity(intent);
+            GalleryPreview p = mHelper.getDataAtEx(position);
+            if (p != null) {
+                Intent intent = new Intent(context, GalleryActivity.class);
+                intent.setAction(GalleryActivity.ACTION_EH);
+                intent.putExtra(GalleryActivity.KEY_GALLERY_INFO, mGalleryInfo);
+                intent.putExtra(GalleryActivity.KEY_PAGE, p.getPosition());
+                startActivity(intent);
+            }
         }
         return true;
     }
@@ -261,7 +260,7 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
 
         public GalleryPreviewAdapter() {
             mInflater = getLayoutInflater2();
-            Assert.assertNotNull(mInflater);
+            AssertUtils.assertNotNull(mInflater);
         }
 
         @Override
@@ -273,9 +272,11 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
         @SuppressLint("SetTextI18n")
         public void onBindViewHolder(GalleryPreviewHolder holder, int position) {
             if (null != mHelper) {
-                GalleryPreview preview = mHelper.getDataAt(position);
-                preview.load(holder.image);
-                holder.text.setText(Integer.toString(preview.getPosition() + 1));
+                GalleryPreview preview = mHelper.getDataAtEx(position);
+                if (preview != null) {
+                    preview.load(holder.image);
+                    holder.text.setText(Integer.toString(preview.getPosition() + 1));
+                }
             }
         }
 
@@ -329,6 +330,11 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
                 mAdapter.notifyItemRangeInserted(positionStart, itemCount);
             }
         }
+
+        @Override
+        protected boolean isDuplicate(GalleryPreview d1, GalleryPreview d2) {
+            return false;
+        }
     }
 
     private void onGetPreviewSetSuccess(Pair<PreviewSet, Integer> result, int taskId) {
@@ -340,8 +346,7 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
                 list.add(previewSet.getGalleryPreview(mGalleryInfo.gid, i));
             }
 
-            mHelper.setPages(taskId, result.second);
-            mHelper.onGetPageData(taskId, list);
+            mHelper.onGetPageData(taskId, result.second, 0, list);
         }
     }
 
@@ -430,7 +435,7 @@ public class GalleryPreviewsScene extends ToolbarScene implements EasyRecyclerVi
                     mDialog = null;
                 }
             } else {
-                showTip(R.string.error_out_of_range, LENGTH_SHORT);
+                showTip(R.string.error_out_of_range, LENGTH_LONG);
             }
         }
 

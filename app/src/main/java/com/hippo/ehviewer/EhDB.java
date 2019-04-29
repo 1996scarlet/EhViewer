@@ -20,10 +20,9 @@ import android.content.Context;
 import android.database.Cursor;
 import android.database.sqlite.SQLiteDatabase;
 import android.database.sqlite.SQLiteOpenHelper;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
 import android.util.Log;
-
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import com.hippo.ehviewer.client.data.GalleryInfo;
 import com.hippo.ehviewer.client.data.ListUrlBuilder;
 import com.hippo.ehviewer.dao.DaoMaster;
@@ -43,12 +42,13 @@ import com.hippo.ehviewer.dao.LocalFavoritesDao;
 import com.hippo.ehviewer.dao.QuickSearch;
 import com.hippo.ehviewer.dao.QuickSearchDao;
 import com.hippo.ehviewer.download.DownloadManager;
+import com.hippo.util.ExceptionUtils;
 import com.hippo.util.SqlUtils;
 import com.hippo.yorozuya.FileUtils;
 import com.hippo.yorozuya.IOUtils;
 import com.hippo.yorozuya.ObjectUtils;
 import com.hippo.yorozuya.collect.SparseJLArray;
-
+import de.greenrobot.dao.query.LazyList;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -57,8 +57,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
-
-import de.greenrobot.dao.query.LazyList;
 
 public class EhDB {
 
@@ -91,8 +89,36 @@ public class EhDB {
 
     private static void upgradeDB(SQLiteDatabase db, int oldVersion) {
         switch (oldVersion) {
-            case 1: // 1 to 2
+            case 1: // 1 to 2, add FILTER
                 FilterDao.createTable(db, true);
+            case 2: // 2 to 3, add ENABLE column to table FILTER
+                db.execSQL("CREATE TABLE " + "\"FILTER2\" (" +
+                    "\"_id\" INTEGER PRIMARY KEY ," +
+                    "\"MODE\" INTEGER NOT NULL ," +
+                    "\"TEXT\" TEXT," +
+                    "\"ENABLE\" INTEGER);");
+                db.execSQL("INSERT INTO \"FILTER2\" (" +
+                        "_id, MODE, TEXT, ENABLE)" +
+                        "SELECT _id, MODE, TEXT, 1 FROM FILTER;");
+                db.execSQL("DROP TABLE FILTER");
+                db.execSQL("ALTER TABLE FILTER2 RENAME TO FILTER");
+            case 3: // 3 to 4, add PAGE_FROM and PAGE_TO column to QUICK_SEARCH
+                db.execSQL("CREATE TABLE " + "\"QUICK_SEARCH2\" (" +
+                    "\"_id\" INTEGER PRIMARY KEY ," +
+                    "\"NAME\" TEXT," +
+                    "\"MODE\" INTEGER NOT NULL ," +
+                    "\"CATEGORY\" INTEGER NOT NULL ," +
+                    "\"KEYWORD\" TEXT," +
+                    "\"ADVANCE_SEARCH\" INTEGER NOT NULL ," +
+                    "\"MIN_RATING\" INTEGER NOT NULL ," +
+                    "\"PAGE_FROM\" INTEGER NOT NULL ," +
+                    "\"PAGE_TO\" INTEGER NOT NULL ," +
+                    "\"TIME\" INTEGER NOT NULL );");
+                db.execSQL("INSERT INTO \"QUICK_SEARCH2\" (" +
+                    "_id, NAME, MODE, CATEGORY, KEYWORD, ADVANCE_SEARCH, MIN_RATING, PAGE_FROM, PAGE_TO, TIME)" +
+                    "SELECT _id, NAME, MODE, CATEGORY, KEYWORD, ADVANCE_SEARCH, MIN_RATING, -1, -1, TIME FROM QUICK_SEARCH;");
+                db.execSQL("DROP TABLE QUICK_SEARCH");
+                db.execSQL("ALTER TABLE QUICK_SEARCH2 RENAME TO QUICK_SEARCH");
         }
     }
 
@@ -143,7 +169,8 @@ public class EhDB {
         SQLiteDatabase oldDB;
         try {
             oldDB = oldDBHelper.getReadableDatabase();
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             return;
         }
 
@@ -165,7 +192,8 @@ public class EhDB {
                         try {
                             // In 0.6.x version, NaN is stored
                             gi.rating = cursor.getFloat(7);
-                        } catch (Exception e) {
+                        } catch (Throwable e) {
+                            ExceptionUtils.throwIfFatal(e);
                             gi.rating = -1.0f;
                         }
 
@@ -176,7 +204,8 @@ public class EhDB {
                 }
                 cursor.close();
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             // Ignore
         }
 
@@ -206,7 +235,8 @@ public class EhDB {
                 }
                 cursor.close();
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             // Ignore
         }
 
@@ -242,7 +272,8 @@ public class EhDB {
                 }
                 cursor.close();
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             // Ignore
         }
 
@@ -283,7 +314,8 @@ public class EhDB {
                 }
                 cursor.close();
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             // Ignore
         }
 
@@ -312,13 +344,15 @@ public class EhDB {
                 }
                 cursor.close();
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             // Ignore
         }
 
         try {
             oldDBHelper.close();
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             // Ignore
         }
     }
@@ -606,6 +640,11 @@ public class EhDB {
         sDaoSession.getFilterDao().delete(filter);
     }
 
+    public static synchronized void triggerFilter(Filter filter) {
+        filter.setEnable(!filter.enable);
+        sDaoSession.getFilterDao().update(filter);
+    }
+
     public static synchronized boolean exportDB(Context context, File file) {
         File dbFile = context.getDatabasePath("eh.db");
         if (null == dbFile || !dbFile.isFile()) {
@@ -708,7 +747,8 @@ public class EhDB {
             }
 
             return null;
-        } catch (Exception e) {
+        } catch (Throwable e) {
+            ExceptionUtils.throwIfFatal(e);
             // Ignore
             return context.getString(R.string.cant_read_the_file);
         }

@@ -16,23 +16,31 @@
 
 package com.hippo.ehviewer;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.ComponentCallbacks2;
+import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.ServiceConnection;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.os.AsyncTask;
 import android.os.Debug;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.v4.util.LruCache;
 import android.util.Log;
-
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.collection.LruCache;
+import com.getkeepsafe.relinker.ReLinker;
+import com.hippo.a7zip.A7Zip;
+import com.hippo.a7zip.A7ZipExtractLite;
 import com.hippo.beerbelly.SimpleDiskCache;
 import com.hippo.conaco.Conaco;
+import com.hippo.content.RecordingApplication;
 import com.hippo.ehviewer.client.EhClient;
 import com.hippo.ehviewer.client.EhCookieStore;
+import com.hippo.ehviewer.client.EhDns;
 import com.hippo.ehviewer.client.EhEngine;
-import com.hippo.ehviewer.client.EhUrl;
 import com.hippo.ehviewer.client.data.GalleryDetail;
 import com.hippo.ehviewer.download.DownloadManager;
 import com.hippo.ehviewer.spider.SpiderDen;
@@ -40,31 +48,28 @@ import com.hippo.ehviewer.ui.CommonOperations;
 import com.hippo.image.Image;
 import com.hippo.image.ImageBitmap;
 import com.hippo.network.StatusCodeException;
-import com.hippo.okhttp.CookieDB;
-import com.hippo.scene.SceneApplication;
 import com.hippo.text.Html;
 import com.hippo.unifile.UniFile;
 import com.hippo.util.BitmapUtils;
+import com.hippo.util.ExceptionUtils;
+import com.hippo.util.IoThreadPoolExecutor;
 import com.hippo.util.ReadableTime;
 import com.hippo.yorozuya.FileUtils;
 import com.hippo.yorozuya.IntIdGenerator;
 import com.hippo.yorozuya.OSUtils;
 import com.hippo.yorozuya.SimpleHandler;
-
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import java.util.WeakHashMap;
 import java.util.concurrent.TimeUnit;
-
-import okhttp3.Cookie;
-import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 
-public class EhApplication extends SceneApplication implements Thread.UncaughtExceptionHandler {
+public class EhApplication extends RecordingApplication {
 
     private static final String TAG = EhApplication.class.getSimpleName();
+    private static final String KEY_GLOBAL_STUFF_NEXT_ID = "global_stuff_next_id";
 
     public static final boolean BETA = false;
 
@@ -73,31 +78,49 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
     private static final boolean DEBUG_PRINT_IMAGE_COUNT = false;
     private static final long DEBUG_PRINT_INTERVAL = 3000L;
 
-    private Thread.UncaughtExceptionHandler mDefaultHandler;
+    private static EhApplication instance;
 
     private final IntIdGenerator mIdGenerator = new IntIdGenerator();
-    private final WeakHashMap<Integer, Object> mGlobalStuffMap = new WeakHashMap<>();
+    private final HashMap<Integer, Object> mGlobalStuffMap = new HashMap<>();
     private EhCookieStore mEhCookieStore;
     private EhClient mEhClient;
+    private EhProxySelector mEhProxySelector;
     private OkHttpClient mOkHttpClient;
     private ImageBitmapHelper mImageBitmapHelper;
     private Conaco<ImageBitmap> mConaco;
     private LruCache<Long, GalleryDetail> mGalleryDetailCache;
     private SimpleDiskCache mSpiderInfoCache;
     private DownloadManager mDownloadManager;
+    private Hosts mHosts;
+    private FavouriteStatusRouter mFavouriteStatusRouter;
 
     private final List<Activity> mActivityList = new ArrayList<>();
 
+    public static EhApplication getInstance() {
+        return instance;
+    }
+
+    @SuppressLint("StaticFieldLeak")
     @Override
     public void onCreate() {
-        // Prepare to catch crash
-        mDefaultHandler = Thread.getDefaultUncaughtExceptionHandler();
-        Thread.setDefaultUncaughtExceptionHandler(this);
+        instance = this;
+
+        Thread.UncaughtExceptionHandler handler = Thread.getDefaultUncaughtExceptionHandler();
+        Thread.setDefaultUncaughtExceptionHandler((t, e) -> {
+            try {
+                if (Settings.getSaveCrashLog()) {
+                    Crash.saveCrashLog(instance, e);
+                }
+            } catch (Throwable ignored) { }
+
+            if (handler != null) {
+                handler.uncaughtException(t, e);
+            }
+        });
 
         super.onCreate();
 
         GetText.initialize(this);
-        CookieDB.initialize(this);
         StatusCodeException.initialize(this);
         Settings.initialize(this);
         ReadableTime.initialize(this);
@@ -107,6 +130,8 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
         EhDB.initialize(this);
         EhEngine.initialize();
         BitmapUtils.initialize(this);
+        Image.initialize(this);
+        A7Zip.loadLibrary(A7ZipExtractLite.LIBRARY, libname -> ReLinker.loadLibrary(EhApplication.this, libname));
 
         if (EhDB.needMerge()) {
             EhDB.mergeOldDB(this);
@@ -116,16 +141,32 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
             Analytics.start(this);
         }
 
-        // Check no media file
-        UniFile downloadLocation = Settings.getDownloadLocation();
-        if (Settings.getMediaScan()) {
-            CommonOperations.removeNoMediaFile(downloadLocation);
-        } else {
-            CommonOperations.ensureNoMediaFile(downloadLocation);
-        }
+        // Do io tasks in new thread
+        new AsyncTask<Void, Void, Void>() {
+            @Override
+            protected Void doInBackground(Void... voids) {
+                // Check no media file
+                try {
+                    UniFile downloadLocation = Settings.getDownloadLocation();
+                    if (Settings.getMediaScan()) {
+                        CommonOperations.removeNoMediaFile(downloadLocation);
+                    } else {
+                        CommonOperations.ensureNoMediaFile(downloadLocation);
+                    }
+                } catch (Throwable t) {
+                    ExceptionUtils.throwIfFatal(t);
+                }
 
-        // Clear temp dir
-        clearTempDir();
+                // Clear temp files
+                try {
+                    clearTempDir();
+                } catch (Throwable t) {
+                    ExceptionUtils.throwIfFatal(t);
+                }
+
+                return null;
+            }
+        }.executeOnExecutor(IoThreadPoolExecutor.getInstance());
 
         // Check app update
         update();
@@ -137,6 +178,8 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
         } catch (PackageManager.NameNotFoundException e) {
             // Ignore
         }
+
+        mIdGenerator.setNextId(Settings.getInt(KEY_GLOBAL_STUFF_NEXT_ID, 0));
 
         if (DEBUG_PRINT_NATIVE_MEMORY || DEBUG_PRINT_IMAGE_COUNT) {
             debugPrint();
@@ -152,35 +195,15 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
         if (null != dir) {
             FileUtils.deleteContent(dir);
         }
+
+        // Add .nomedia to external temp dir
+        CommonOperations.ensureNoMediaFile(UniFile.fromFile(AppConfig.getExternalTempDir()));
     }
 
     private void update() {
         int version = Settings.getVersionCode();
         if (version < 52) {
             Settings.putGuideGallery(true);
-        }
-        if (version < 56) { // Make cookie long live
-            HttpUrl eUrl = HttpUrl.parse(EhUrl.HOST_E);
-            HttpUrl exUrl = HttpUrl.parse(EhUrl.HOST_EX);
-            EhCookieStore cookieStore = getEhCookieStore(this);
-
-            Cookie c;
-            c = cookieStore.get(eUrl, EhCookieStore.KEY_IPD_MEMBER_ID);
-            if (null != c) {
-                cookieStore.add(EhCookieStore.newCookie(c, c.domain(), true, true, true));
-            }
-            c = cookieStore.get(eUrl, EhCookieStore.KEY_IPD_PASS_HASH);
-            if (null != c) {
-                cookieStore.add(EhCookieStore.newCookie(c, c.domain(), true, true, true));
-            }
-            c = cookieStore.get(exUrl, EhCookieStore.KEY_IPD_MEMBER_ID);
-            if (null != c) {
-                cookieStore.add(EhCookieStore.newCookie(c, c.domain(), true, true, true));
-            }
-            c = cookieStore.get(exUrl, EhCookieStore.KEY_IPD_PASS_HASH);
-            if (null != c) {
-                cookieStore.add(EhCookieStore.newCookie(c, c.domain(), true, true, true));
-            }
         }
     }
 
@@ -221,6 +244,7 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
     public int putGlobalStuff(@NonNull Object o) {
         int id = mIdGenerator.nextId();
         mGlobalStuffMap.put(id, o);
+        Settings.putInt(KEY_GLOBAL_STUFF_NEXT_ID, mIdGenerator.nextId());
         return id;
     }
 
@@ -243,7 +267,7 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
     public static EhCookieStore getEhCookieStore(@NonNull Context context) {
         EhApplication application = ((EhApplication) context.getApplicationContext());
         if (application.mEhCookieStore == null) {
-            application.mEhCookieStore = new EhCookieStore();
+            application.mEhCookieStore = new EhCookieStore(context);
         }
         return application.mEhCookieStore;
     }
@@ -258,6 +282,15 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
     }
 
     @NonNull
+    public static EhProxySelector getEhProxySelector(@NonNull Context context) {
+        EhApplication application = ((EhApplication) context.getApplicationContext());
+        if (application.mEhProxySelector == null) {
+            application.mEhProxySelector = new EhProxySelector();
+        }
+        return application.mEhProxySelector;
+    }
+
+    @NonNull
     public static OkHttpClient getOkHttpClient(@NonNull Context context) {
         EhApplication application = ((EhApplication) context.getApplicationContext());
         if (application.mOkHttpClient == null) {
@@ -266,6 +299,8 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
                     .readTimeout(10, TimeUnit.SECONDS)
                     .writeTimeout(10, TimeUnit.SECONDS)
                     .cookieJar(getEhCookieStore(application))
+                    .dns(new EhDns(application))
+                    .proxySelector(getEhProxySelector(application))
                     .build();
         }
         return application.mOkHttpClient;
@@ -308,6 +343,12 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
         if (application.mGalleryDetailCache == null) {
             // Max size 25, 3 min timeout
             application.mGalleryDetailCache = new LruCache<>(25);
+            getFavouriteStatusRouter().addListener((gid, slot) -> {
+                GalleryDetail gd = application.mGalleryDetailCache.get(gid);
+                if (gd != null) {
+                    gd.favoriteSlot = slot;
+                }
+            });
         }
         return application.mGalleryDetailCache;
     }
@@ -323,6 +364,11 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
     }
 
     @NonNull
+    public static DownloadManager getDownloadManager() {
+        return getDownloadManager(instance);
+    }
+
+    @NonNull
     public static DownloadManager getDownloadManager(@NonNull Context context) {
         EhApplication application = ((EhApplication) context.getApplicationContext());
         if (application.mDownloadManager == null) {
@@ -331,32 +377,27 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
         return application.mDownloadManager;
     }
 
-    private boolean handleException(Throwable ex) {
-        if (ex == null) {
-            return false;
+    @NonNull
+    public static Hosts getHosts(@NonNull Context context) {
+        EhApplication application = ((EhApplication) context.getApplicationContext());
+        if (application.mHosts == null) {
+            application.mHosts = new Hosts(application, "hosts.db");
         }
-        try {
-            ex.printStackTrace();
-            Crash.saveCrashInfo2File(this, ex);
-            return true;
-        } catch (Throwable tr) {
-            return false;
-        }
+        return application.mHosts;
     }
 
-    @Override
-    public void uncaughtException(Thread thread, Throwable ex) {
-        if (!handleException(ex) && mDefaultHandler != null) {
-            mDefaultHandler.uncaughtException(thread, ex);
-        }
+    @NonNull
+    public static FavouriteStatusRouter getFavouriteStatusRouter() {
+        return getFavouriteStatusRouter(getInstance());
+    }
 
-        Activity activity = getTopActivity();
-        if (activity != null) {
-            activity.finish();
+    @NonNull
+    public static FavouriteStatusRouter getFavouriteStatusRouter(@NonNull Context context) {
+        EhApplication application = ((EhApplication) context.getApplicationContext());
+        if (application.mFavouriteStatusRouter == null) {
+            application.mFavouriteStatusRouter = new FavouriteStatusRouter();
         }
-
-        android.os.Process.killProcess(android.os.Process.myPid());
-        System.exit(1);
+        return application.mFavouriteStatusRouter;
     }
 
     @NonNull
@@ -378,6 +419,38 @@ public class EhApplication extends SceneApplication implements Thread.UncaughtEx
             return mActivityList.get(mActivityList.size() - 1);
         } else {
             return null;
+        }
+    }
+
+    // Avoid crash on some "energy saving" devices
+    @Override
+    public ComponentName startService(Intent service) {
+        try {
+            return super.startService(service);
+        } catch (Throwable t) {
+            ExceptionUtils.throwIfFatal(t);
+            return null;
+        }
+    }
+
+    // Avoid crash on some "energy saving" devices
+    @Override
+    public boolean bindService(Intent service, ServiceConnection conn, int flags) {
+        try {
+            return super.bindService(service, conn, flags);
+        } catch (Throwable t) {
+            ExceptionUtils.throwIfFatal(t);
+            return false;
+        }
+    }
+
+    // Avoid crash on some "energy saving" devices
+    @Override
+    public void unbindService(ServiceConnection conn) {
+        try {
+            super.unbindService(conn);
+        } catch (Throwable t) {
+            ExceptionUtils.throwIfFatal(t);
         }
     }
 }

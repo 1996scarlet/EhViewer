@@ -17,13 +17,14 @@
 package com.hippo.ehviewer.ui;
 
 import android.hardware.fingerprint.FingerprintManager;
+import android.os.Build;
 import android.os.Bundle;
-import android.support.annotation.Nullable;
 import android.text.TextUtils;
 import android.view.MenuItem;
 import android.view.View;
 import android.widget.CheckBox;
-
+import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import com.hippo.ehviewer.R;
 import com.hippo.ehviewer.Settings;
 import com.hippo.widget.lockpattern.LockPatternUtils;
@@ -62,7 +63,7 @@ public class SetSecurityActivity extends ToolbarActivity implements View.OnClick
             FingerprintManager fingerprintManager = getSystemService(FingerprintManager.class);
             // The line below prevents the false positive inspection from Android Studio
             // noinspection ResourceType
-            if (fingerprintManager.hasEnrolledFingerprints()) {
+            if (fingerprintManager != null && hasEnrolledFingerprints(fingerprintManager)) {
                 mFingerprint.setVisibility(View.VISIBLE);
                 mFingerprint.setChecked(Settings.getEnableFingerprint());
             }
@@ -70,6 +71,16 @@ public class SetSecurityActivity extends ToolbarActivity implements View.OnClick
 
         mCancel.setOnClickListener(this);
         mSet.setOnClickListener(this);
+    }
+
+    @RequiresApi(api = Build.VERSION_CODES.M)
+    public static boolean hasEnrolledFingerprints(FingerprintManager fingerprintManager) {
+        try {
+            return fingerprintManager.isHardwareDetected()
+                && fingerprintManager.hasEnrolledFingerprints();
+        } catch (Throwable e) {
+            return false;
+        }
     }
 
     @Override

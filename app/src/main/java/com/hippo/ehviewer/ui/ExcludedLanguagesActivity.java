@@ -17,15 +17,15 @@
 package com.hippo.ehviewer.ui;
 
 import android.os.Bundle;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.v7.widget.LinearLayoutManager;
-import android.support.v7.widget.RecyclerView;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.TextView;
-
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.recyclerview.widget.LinearLayoutManager;
+import androidx.recyclerview.widget.RecyclerView;
+import com.hippo.android.resource.AttrResources;
 import com.hippo.easyrecyclerview.EasyRecyclerView;
 import com.hippo.ehviewer.R;
 import com.hippo.ehviewer.Settings;
@@ -164,11 +164,12 @@ public class ExcludedLanguagesActivity extends ToolbarActivity
         mDeselectAll.setOnClickListener(this);
         mInvertSelection.setOnClickListener(this);
 
-        Ripple.addRipple(mCancel, false);
-        Ripple.addRipple(mOk, false);
-        Ripple.addRipple(mSelectAll, false);
-        Ripple.addRipple(mDeselectAll, false);
-        Ripple.addRipple(mInvertSelection, false);
+        boolean isDarkTheme = !AttrResources.getAttrBoolean(this, R.attr.isLightTheme);
+        Ripple.addRipple(mCancel, isDarkTheme);
+        Ripple.addRipple(mOk, isDarkTheme);
+        Ripple.addRipple(mSelectAll, isDarkTheme);
+        Ripple.addRipple(mDeselectAll, isDarkTheme);
+        Ripple.addRipple(mInvertSelection, isDarkTheme);
     }
 
     private boolean isDecimal(String str) {

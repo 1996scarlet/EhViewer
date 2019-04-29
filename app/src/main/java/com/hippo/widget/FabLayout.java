@@ -20,18 +20,16 @@ import android.animation.Animator;
 import android.content.Context;
 import android.os.Bundle;
 import android.os.Parcelable;
-import android.support.annotation.NonNull;
-import android.support.design.widget.FloatingActionButton;
 import android.util.AttributeSet;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.Interpolator;
-
+import androidx.annotation.NonNull;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.hippo.ehviewer.R;
 import com.hippo.yorozuya.AnimationUtils;
+import com.hippo.yorozuya.AssertUtils;
 import com.hippo.yorozuya.SimpleAnimatorListener;
-
-import junit.framework.Assert;
 
 public class FabLayout extends ViewGroup implements View.OnClickListener {
 
@@ -109,9 +107,9 @@ public class FabLayout extends ViewGroup implements View.OnClickListener {
 
     @Override
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        Assert.assertEquals("Measure mode must be MeasureSpec.EXACTLY",
+        AssertUtils.assertEquals("Measure mode must be MeasureSpec.EXACTLY",
                 MeasureSpec.getMode(widthMeasureSpec), MeasureSpec.EXACTLY);
-        Assert.assertEquals("Measure mode must be MeasureSpec.EXACTLY",
+        AssertUtils.assertEquals("Measure mode must be MeasureSpec.EXACTLY",
                 MeasureSpec.getMode(heightMeasureSpec), MeasureSpec.EXACTLY);
 
         int width = MeasureSpec.getSize(widthMeasureSpec);
@@ -232,6 +230,9 @@ public class FabLayout extends ViewGroup implements View.OnClickListener {
                     int checkCount = mHidePrimaryFab ? count : count - 1;
                     for (int i = 0; i < checkCount; i++) {
                         View child = getChildAt(i);
+                        if (child.getVisibility() == GONE) {
+                            continue;
+                        }
                         child.setVisibility(expanded ? View.VISIBLE : View.INVISIBLE);
                         if (expanded) {
                             child.setAlpha(1f);
@@ -244,6 +245,9 @@ public class FabLayout extends ViewGroup implements View.OnClickListener {
 
                     for (int i = 0; i < count - 1; i++) {
                         View child = getChildAt(i);
+                        if (child.getVisibility() == GONE) {
+                            continue;
+                        }
                         setSecondaryFabAnimation(child, expanded, expanded);
                     }
                 }
